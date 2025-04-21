@@ -108,6 +108,51 @@ remoteCommands="
     echo 'ℹ️ Docker is not a service, skipping stop command';
   fi
 
+  echo '🚸 Checking if curl is installed...';
+  if ! command -v curl &> /dev/null; then
+    echo 'ℹ️  curl is not installed. Installing curl...';
+
+      # Detect OS and install curl accordingly
+      if [ -f /etc/debian_version ] || { [ -f /etc/os-release ] && grep -iq "raspbian" /etc/os-release; }; then
+        echo 'ℹ️ Detected Debian-based or Raspberry Pi OS';
+        if ! apt-get update && apt-get install -y curl; then
+        echo '❌ Failed to install curl on Debian-based or Raspberry Pi OS';
+        exit 1;
+        fi
+      elif [ -f /etc/redhat-release ]; then
+        echo 'ℹ️ Detected Redhat-based system';
+        if ! yum install -y curl; then
+        echo '❌ Failed to install curl on Redhat-based system';
+        exit 1;
+        fi
+      elif [ -f /etc/SuSE-release ] || [ -f /etc/os-release ] && grep -iq "suse" /etc/os-release; then
+        echo 'ℹ️ Detected SUSE-based system';
+        if ! zypper install -y curl; then
+        echo '❌ Failed to install curl on SUSE-based system';
+        exit 1;
+        fi
+      elif [ -f /etc/arch-release ]; then
+        echo 'ℹ️ Detected Arch Linux';
+        if ! pacman -Sy --noconfirm curl; then
+        echo '❌ Failed to install curl on Arch Linux';
+        exit 1;
+        fi
+      elif [ -f /etc/alpine-release ]; then
+        echo 'ℹ️ Detected Alpine Linux';
+        if ! apk add --no-cache curl; then
+        echo '❌ Failed to install curl on Alpine Linux';
+        exit 1;
+        fi
+      else
+        echo '❌ Unsupported OS. Please install curl manually.';
+        exit 1;
+      fi
+
+      echo '✅ curl installed';
+      else
+      echo '✅ curl is already installed';
+      fi
+
   echo '🚸 Saving existing authorized keys...';
   cp ~/.ssh/authorized_keys ~/.ssh/authorized_keys_backup;
 
