@@ -6,8 +6,10 @@
 # 2. Have all the containers running that you want to migrate
 
 # Configuration - Modify as needed
-sshKeyPath="$HOME/.ssh/your_private_key" # Key to destination server
-destinationHost="server.example.com"
+sshKeyPath="$HOME/.ssh/key.pem" # Key to destination server
+destinationHost="102.223.37.36"
+sourceUser="root" # User on the source server (ensure this user has permissions for Docker and file access)
+destinationUser="root" # User on the destination server
 
 # -- Shouldn't need to modify anything below --
 backupSourceDir="/data/coolify/"
@@ -28,8 +30,8 @@ fi
 echo "✅ SSH key file exists"
 
 # Check if we can SSH to the destination server, ignore "The authenticity of host can't be established." errors
-if ! ssh -i "$sshKeyPath" -o "StrictHostKeyChecking no" -o "ConnectTimeout=5" root@$destinationHost "exit"; then
-  echo "❌ SSH connection to $destinationHost failed"
+if ! ssh -i "$sshKeyPath" -o "StrictHostKeyChecking no" -o "ConnectTimeout=5" ${destinationUser}@$destinationHost "exit"; then
+  echo "❌ SSH connection to ${destinationUser}@$destinationHost failed"
   exit 1
 fi
 echo "✅ SSH connection successful"
@@ -85,6 +87,8 @@ if [ ! -f "$backupFileName" ]; then
   fi
 
   # shellcheck disable=SC2086
+  # Note: If sourceUser is not the user running this script, $HOME/.ssh/authorized_keys might point to the wrong location.
+  # Ensure the correct authorized_keys for the sourceUser is backed up if not running as sourceUser.
   if ! tar --exclude='*.sock' -Pczf $backupFileName -C / $backupSourceDir $HOME/.ssh/authorized_keys $volumePaths; then
     echo "❌ Backup file creation failed"
     exit 1
@@ -177,7 +181,7 @@ remoteCommands="
 "
 
 # SSH to the destination server, execute the remote commands
-if ! ssh -i "$sshKeyPath" -o "StrictHostKeyChecking no" root@$destinationHost "$remoteCommands" <$backupFileName; then
+if ! ssh -i "$sshKeyPath" -o "StrictHostKeyChecking no" ${destinationUser}@$destinationHost "$remoteCommands" <$backupFileName; then
   echo "❌ Remote commands execution or Docker restart failed"
   exit 1
 fi
