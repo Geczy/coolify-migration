@@ -43,7 +43,7 @@ volumePaths=""
 # Loop over the container names
 for containerName in $containerNames; do
   # Get the volumes for the current container
-  volumeNames=$(docker inspect --format '{{range .Mounts}}{{.Name}} {{end}}' "$containerName")
+  volumeNames=$(docker inspect --format '{{range .Mounts}}{{printf "%s\n" .Name}}{{end}}' "$containerName")
 
   # Loop over the volume names
   for volumeName in $volumeNames; do
