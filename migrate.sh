@@ -50,7 +50,7 @@ for containerName in $containerNames; do
     # Check if the volume name is not empty
     if [ -n "$volumeName" ]; then
       # Add the volume path to the volume paths string
-      volumePaths+=" /var/lib/docker/volumes/$volumeName"
+      volumePaths="$volumePaths /var/lib/docker/volumes/$volumeName"
     fi
   done
 done
