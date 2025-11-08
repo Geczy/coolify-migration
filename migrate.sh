@@ -84,12 +84,24 @@ if [ ! -f "$backupFileName" ]; then
     echo "🚸 Docker not stopped, continuing with the backup"
   fi
 
+  # Choose compressor
+  if command -v pigz >/dev/null 2>&1; then
+    echo "✅ Using pigz for parallel gzip"
+    compressor="pigz -p$(nproc)"
+  else
+    echo "ℹ️ pigz not found, using gzip"
+    compressor="gzip"
+  fi
+
   # shellcheck disable=SC2086
-  if ! tar --exclude='*.sock' -Pczf $backupFileName -C / $backupSourceDir $HOME/.ssh/authorized_keys $volumePaths; then
+  tar --exclude='*.sock' --warning=no-file-changed -I "$compressor" -Pcf "$backupFileName" \
+    -C / $backupSourceDir $HOME/.ssh/authorized_keys $volumePaths
+  rc=$?
+  if [ $rc -gt 1 ]; then
     echo "❌ Backup file creation failed"
     exit 1
   fi
-  echo "✅ Backup file created"
+  echo "✅ Backup file created (with change warnings suppressed)"
 else
   echo "🚸 Backup file already exists, skipping creation"
 fi
@@ -156,12 +168,20 @@ remoteCommands="
   echo '🚸 Saving existing authorized keys...';
   cp ~/.ssh/authorized_keys ~/.ssh/authorized_keys_backup;
 
-  echo '🚸 Extracting backup file...';
-  if ! tar -Pxzf - -C /; then
-    echo '❌ Backup file extraction failed';
-    exit 1;
+  echo '🚸 Extracting backup file...'
+  if command -v pigz >/dev/null 2>&1; then
+    echo '✅ Using pigz for parallel decompression'
+    if ! tar -I pigz -Pxf - -C /; then
+      echo '❌ Backup file extraction failed'
+      exit 1
+    fi
+  else
+    if ! tar -Pzxf - -C /; then
+      echo '❌ Backup file extraction failed'
+      exit 1
+    fi
   fi
-  echo '✅ Backup file extracted';
+  echo '✅ Backup file extracted'
 
   echo '🚸 Merging authorized keys...';
   cat ~/.ssh/authorized_keys_backup ~/.ssh/authorized_keys | sort | uniq > ~/.ssh/authorized_keys_temp;
