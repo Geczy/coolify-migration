@@ -5,34 +5,57 @@
 # 1. Script must run on the source server
 # 2. Have all the containers running that you want to migrate
 
-# Configuration - Modify as needed
-sshKeyPath="$HOME/.ssh/your_private_key" # Key to destination server
-destinationHost="server.example.com"
+# Require full SSH target as first argument (user@host)
+usage() {
+  echo "Usage: $0 USER@HOST"
+  echo ""
+  echo "  USER@HOST  Full SSH target: user and hostname or IP (e.g. root@server.example.com)"
+  echo ""
+  echo "Example: $0 root@server.example.com"
+  exit 1
+}
+if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+  usage
+fi
+if [ -z "$1" ]; then
+  echo "❌ Error: SSH target (user@host) is required"
+  echo ""
+  usage
+fi
+if [[ "$1" != *"@"* ]]; then
+  echo "❌ Error: SSH target must be in the form user@host (e.g. root@server.example.com)"
+  echo ""
+  usage
+fi
+sshTarget="$1"
 
-# Prompt for configuration if defaults are still set
-if [ "$sshKeyPath" = "$HOME/.ssh/your_private_key" ] || [ "$destinationHost" = "server.example.com" ]; then
-  echo "⚠️  Configuration not set. Please provide the following:"
-  echo ""
-  
+# Configuration - Modify as needed (SSH key is auto-detected from ~/.ssh when default is set)
+sshKeyPath="$HOME/.ssh/your_private_key" # Key to destination server
+
+# Auto-detect best SSH private key from ~/.ssh when default is set
+if [ "$sshKeyPath" = "$HOME/.ssh/your_private_key" ]; then
+  sshDir="$HOME/.ssh"
+  if [ ! -d "$sshDir" ]; then
+    echo "❌ No SSH directory found at $sshDir"
+    exit 1
+  fi
+  # Prefer ed25519, then ecdsa, then rsa (standard key names, best to good)
+  for keyName in id_ed25519 id_ecdsa id_rsa; do
+    candidate="$sshDir/$keyName"
+    if [ -f "$candidate" ] && [ -r "$candidate" ]; then
+      if ssh-keygen -l -f "$candidate" >/dev/null 2>&1; then
+        sshKeyPath="$candidate"
+        echo "✅ Using SSH key: $sshKeyPath"
+        break
+      fi
+    fi
+  done
   if [ "$sshKeyPath" = "$HOME/.ssh/your_private_key" ]; then
-    echo "Enter the path to your SSH private key for the destination server:"
-    read -r sshKeyPath
-    if [ -z "$sshKeyPath" ]; then
-      echo "❌ SSH key path cannot be empty"
-      exit 1
-    fi
+    echo "❌ No usable SSH private key found in $sshDir"
+    echo "   Looked for: id_ed25519, id_ecdsa, id_rsa (with correct permissions)"
+    echo "   Create a key with: ssh-keygen -t ed25519 -f $sshDir/id_ed25519"
+    exit 1
   fi
-  
-  if [ "$destinationHost" = "server.example.com" ]; then
-    echo "Enter the destination server hostname or IP address:"
-    read -r destinationHost
-    if [ -z "$destinationHost" ]; then
-      echo "❌ Destination host cannot be empty"
-      exit 1
-    fi
-  fi
-  
-  echo ""
 fi
 
 # -- Shouldn't need to modify anything below --
@@ -178,8 +201,8 @@ fi
 echo "✅ SSH key file exists"
 
 # Check if we can SSH to the destination server, ignore "The authenticity of host can't be established." errors
-if ! ssh -i "$sshKeyPath" -o "StrictHostKeyChecking no" -o "ConnectTimeout=5" "root@${destinationHost}" "exit"; then
-  echo "❌ SSH connection to $destinationHost failed"
+if ! ssh -i "$sshKeyPath" -o "StrictHostKeyChecking no" -o "ConnectTimeout=5" "$sshTarget" "exit"; then
+  echo "❌ SSH connection to $sshTarget failed"
   exit 1
 fi
 echo "✅ SSH connection successful"
@@ -383,7 +406,7 @@ remoteCommands="
 "
 
 # SSH to the destination server, execute the remote commands
-if ! ssh -i "$sshKeyPath" -o "StrictHostKeyChecking no" "root@${destinationHost}" "$remoteCommands" <"${backupFileName}"; then
+if ! ssh -i "$sshKeyPath" -o "StrictHostKeyChecking no" "$sshTarget" "$remoteCommands" <"${backupFileName}"; then
   echo "❌ Remote commands execution or Docker restart failed"
   exit 1
 fi

@@ -2,6 +2,8 @@
 
 A comprehensive bash script to backup and migrate your entire Coolify instance from one server to another. This script handles Docker volumes, the Coolify database, SSH keys, and all associated data.
 
+**Run this script on the source server**—the server that currently has Coolify running. Do not run it from your laptop or from the destination server.
+
 ## 📋 Table of Contents
 
 - [Overview](#overview)
@@ -33,7 +35,7 @@ The script runs on the **source server** and transfers everything to the **desti
 - **Automatic Docker Volume Detection**: Automatically discovers and backs up all volumes from running containers
 - **Parallel Compression**: Uses `pigz` (parallel gzip) for faster backups when available, with automatic fallback to `gzip`
 - **Auto-Installation**: Can automatically install `pigz` if not present (supports multiple package managers)
-- **Interactive Configuration**: Prompts for SSH key and destination host if not pre-configured
+- **Interactive Configuration**: Auto-detects SSH key from `~/.ssh`; full SSH target (user@host) is a required command-line argument
 - **Comprehensive Error Handling**: Validates prerequisites and provides clear error messages
 - **SSH Key Merging**: Safely merges existing SSH keys on destination server
 - **Automatic Coolify Installation**: Installs Coolify on the destination server if needed
@@ -63,6 +65,8 @@ The script runs on the **source server** and transfers everything to the **desti
 
 ## 🚀 Installation
 
+On the **source server** (where Coolify currently runs), do the following:
+
 1. Clone or download this repository:
 ```bash
 git clone https://github.com/rogerb831/coolify-migration.git
@@ -81,22 +85,15 @@ nano migrate.sh
 
 ## ⚙️ Configuration
 
-The script has two configuration options at the top of the file:
+The script requires the **full SSH target** (user@host) as a command-line argument. No user is assumed. The SSH key is auto-detected from `~/.ssh` (or can be set in the script).
 
 ```bash
-sshKeyPath="$HOME/.ssh/your_private_key"  # Path to SSH private key
-destinationHost="server.example.com"     # Destination server hostname/IP
+./migrate.sh USER@HOST
 ```
 
-### Configuration Methods
+Example: `./migrate.sh root@server.example.com`
 
-**Option 1: Edit the script directly**
-- Modify lines 9-10 in `migrate.sh`
-- Set your actual SSH key path and destination host
-
-**Option 2: Interactive prompts**
-- Leave the defaults as-is
-- The script will prompt you for values at runtime
+**Optional**: You can set `sshKeyPath` in the script if you want to use a specific key instead of auto-detection.
 
 ### Additional Configuration
 
@@ -108,22 +105,31 @@ The script uses these default paths (can be modified in the script):
 
 ### Basic Usage
 
-1. **Ensure all containers you want to migrate are running** on the source server
+**Run the script on the source server** (the machine that currently runs Coolify).
 
-2. **Run the script**:
+1. **Ensure all containers you want to migrate are running** on the source server.
+
+2. **From the source server**, run the script with the full SSH target (user@host) as the first argument:
 ```bash
-./migrate.sh
+./migrate.sh root@server.example.com
 ```
 
+Or with another user and hostname:
+```bash
+./migrate.sh deploy@coolify-dest.mycompany.com
+```
+
+Use `./migrate.sh --help` to show usage.
+
 3. **Follow the interactive prompts**:
-   - Configure SSH key and destination (if not pre-configured)
+   - SSH key is auto-detected from `~/.ssh` (or use one set in the script)
    - Choose whether to install `pigz` if not available
    - Confirm Docker stop (recommended for data consistency)
    - Confirm backup file cleanup after migration
 
 ### Step-by-Step Process
 
-1. **Configuration Check**: Script verifies or prompts for SSH key and destination host
+1. **Argument Check**: Full SSH target (user@host) is required as first argument; SSH key is auto-detected from `~/.ssh`
 2. **Pigz Detection**: Checks for `pigz` and offers auto-installation if missing
 3. **Prerequisites Validation**: 
    - Verifies source directory exists
@@ -221,7 +227,7 @@ For other distributions, you can manually install `pigz` or the script will use 
 - **Solution**: 
   - Verify destination server is reachable
   - Check SSH key permissions: `chmod 600 your_key`
-  - Test SSH manually: `ssh -i your_key root@destination`
+  - Test SSH manually: `ssh -i your_key user@destination`
 
 #### "Source directory does not exist"
 - **Cause**: Coolify data directory not at `/data/coolify/`
@@ -281,7 +287,7 @@ If you encounter issues:
 
 - The script **stops Docker** on the destination server during extraction
 - Existing SSH keys on destination are **merged**, not replaced
-- The script requires **root access** on the destination server
+- The script requires SSH access to the destination server (use the user that has access, e.g. root or a deploy user)
 - Socket files (`*.sock`) are **excluded** from backup (they're runtime-only)
 
 ## 🤝 Contributing
