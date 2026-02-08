@@ -12,6 +12,7 @@ A comprehensive bash script to backup and migrate your entire Coolify instance f
 - [Installation](#installation)
 - [Configuration](#configuration)
 - [Usage](#usage)
+- [Reset Target (Re-testing)](#reset-target-re-testing)
 - [What Gets Migrated](#what-gets-migrated)
 - [How It Works](#how-it-works)
 - [Supported Operating Systems](#supported-operating-systems)
@@ -73,9 +74,9 @@ git clone https://github.com/rogerb831/coolify-migration.git
 cd coolify-migration
 ```
 
-2. Make the script executable:
+2. Make the scripts executable:
 ```bash
-chmod +x migrate.sh
+chmod +x migrate.sh reset-target.sh
 ```
 
 3. Edit the configuration section (optional - you can also be prompted at runtime):
@@ -119,7 +120,7 @@ Or with another user and hostname:
 ./migrate.sh deploy@coolify-dest.mycompany.com
 ```
 
-Use `./migrate.sh --help` to show usage.
+Use `./migrate.sh --help` to show usage and options (e.g. `--no-strict-host-key`).
 
 3. **Follow the interactive prompts**:
    - SSH key is auto-detected from `~/.ssh` (or use one set in the script)
@@ -146,6 +147,47 @@ Use `./migrate.sh --help` to show usage.
    - Merges SSH keys
    - Installs/updates Coolify
 8. **Cleanup**: Optionally removes local backup file
+
+## 🔄 Reset Target (Re-testing)
+
+To run the migration again against the same destination, reset the **target** server first. Use the included `reset-target.sh` script. The target is left with **no Coolify and no Docker**, as it would be before any install.
+
+**Same as migration:** Run `reset-target.sh` **on the source** (the machine you run `migrate.sh` from). Pass the **target** as `USER@HOST`. The script SSHs to the target and performs the reset there.
+
+### What the reset script does (on the target)
+
+- Stops and removes all containers (Coolify and everything else)
+- Stops the Docker daemon
+- Removes `/data/coolify` (Coolify config, compose files, app data)
+- Removes all Docker data (`/var/lib/docker`, `/var/lib/containerd`, `/etc/docker`)
+- Uninstalls Docker packages (Debian/Ubuntu, RHEL/Fedora, SUSE, Arch, Alpine)
+
+After the reset, the target has no Coolify and no Docker. The next migration will install Docker again (via the Coolify install script) and then restore your data.
+
+### How to run it
+
+From the **source** server (same as for migration):
+
+```bash
+./reset-target.sh USER@HOST
+```
+
+Example:
+
+```bash
+./reset-target.sh root@server.example.com
+```
+
+You must type **DESTROY** (all caps) when prompted to confirm. Options:
+
+- `--yes` — Skip confirmation (e.g. for automation)
+- `--no-strict-host-key` — Disable SSH host key verification
+
+```bash
+./reset-target.sh --help
+```
+
+After the reset, the target has no Coolify and no Docker; you can run `./migrate.sh USER@TARGET` from the source again for a clean re-test (the migration will install Docker and Coolify on the target).
 
 ## 📦 What Gets Migrated
 
@@ -254,6 +296,10 @@ For other distributions, you can manually install `pigz` or the script will use 
 - **Cause**: Container may have been stopped during migration
 - **Solution**: Ensure all containers remain running during volume discovery
 
+#### Volume warning: "already exists but was not created by Docker Compose"
+- **Cause**: After migration, restored volumes (e.g. `..._runner-data`) already exist on disk but were not created by Docker Compose, so Compose suggests `external: true`.
+- **Impact**: **Safe to ignore.** The service uses the existing volume correctly; your data is intact. The message is only a warning.
+
 ### Getting Help
 
 If you encounter issues:
@@ -282,6 +328,7 @@ If you encounter issues:
 1. **Verify Data**: Check that all containers and data are present
 2. **Test Functionality**: Verify Coolify is working correctly
 3. **Clean Up**: Remove backup file after confirming successful migration
+4. **Volume warning**: You may see a warning like `volume "..._runner-data" already exists but was not created by Docker Compose. Use external: true`. This is expected after migration and safe to ignore; see [Troubleshooting](#-troubleshooting).
 
 ### Important Notes
 

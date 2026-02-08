@@ -5,56 +5,87 @@
 # 1. Script must run on the source server
 # 2. Have all the containers running that you want to migrate
 
-# Require full SSH target as first argument (user@host)
+# Require full SSH target (user@host) unless --backup-only
 usage() {
-  echo "Usage: $0 USER@HOST"
+  echo "Usage: $0 [OPTIONS] [USER@HOST]"
   echo ""
-  echo "  USER@HOST  Full SSH target: user and hostname or IP (e.g. root@server.example.com)"
+  echo "  USER@HOST  Full SSH target for migration (required unless --backup-only)"
+  echo ""
+  echo "Options:"
+  echo "  --backup-only        Only create the backup; do not transfer or install (no USER@HOST needed)"
+  echo "  --no-strict-host-key Disable SSH host key verification (accept/first-connect without prompt)"
   echo ""
   echo "Example: $0 root@server.example.com"
+  echo "Example: $0 --backup-only"
+  echo "Example: $0 --no-strict-host-key root@server.example.com"
   exit 1
 }
+
+# SSH: default is to verify host keys (strict); use --no-strict-host-key to disable for migration convenience
+sshNoStrictHostKey="no"
+backupOnly="no"
+
 if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
   usage
 fi
-if [ -z "$1" ]; then
-  echo "❌ Error: SSH target (user@host) is required"
-  echo ""
-  usage
+while [[ "${1:-}" == --* ]]; do
+  case "$1" in
+    --backup-only) backupOnly="yes"; shift ;;
+    --no-strict-host-key) sshNoStrictHostKey="yes"; shift ;;
+    *) echo "❌ Unknown option: $1"; echo ""; usage ;;
+  esac
+done
+if [ "$backupOnly" != "yes" ]; then
+  if [ -z "${1:-}" ]; then
+    echo "❌ Error: SSH target (user@host) is required (or use --backup-only)"
+    echo ""
+    usage
+  fi
+  if [[ "$1" != *"@"* ]]; then
+    echo "❌ Error: SSH target must be in the form user@host (e.g. root@server.example.com)"
+    echo ""
+    usage
+  fi
+  sshTarget="$1"
+else
+  sshTarget=""
 fi
-if [[ "$1" != *"@"* ]]; then
-  echo "❌ Error: SSH target must be in the form user@host (e.g. root@server.example.com)"
-  echo ""
-  usage
+
+# Build SSH options (disable StrictHostKeyChecking only when user passes --no-strict-host-key)
+if [ "$sshNoStrictHostKey" = "yes" ]; then
+  sshOpts="-o StrictHostKeyChecking=no -o ConnectTimeout=5"
+else
+  sshOpts="-o ConnectTimeout=5"
 fi
-sshTarget="$1"
 
 # Configuration - Modify as needed (SSH key is auto-detected from ~/.ssh when default is set)
 sshKeyPath="$HOME/.ssh/your_private_key" # Key to destination server
 
-# Auto-detect best SSH private key from ~/.ssh when default is set
-if [ "$sshKeyPath" = "$HOME/.ssh/your_private_key" ]; then
-  sshDir="$HOME/.ssh"
-  if [ ! -d "$sshDir" ]; then
-    echo "❌ No SSH directory found at $sshDir"
-    exit 1
-  fi
-  # Prefer ed25519, then ecdsa, then rsa (standard key names, best to good)
-  for keyName in id_ed25519 id_ecdsa id_rsa; do
-    candidate="$sshDir/$keyName"
-    if [ -f "$candidate" ] && [ -r "$candidate" ]; then
-      if ssh-keygen -l -f "$candidate" >/dev/null 2>&1; then
-        sshKeyPath="$candidate"
-        echo "✅ Using SSH key: $sshKeyPath"
-        break
-      fi
-    fi
-  done
+# Auto-detect best SSH private key (only needed for full migration, not --backup-only)
+if [ "$backupOnly" != "yes" ]; then
   if [ "$sshKeyPath" = "$HOME/.ssh/your_private_key" ]; then
-    echo "❌ No usable SSH private key found in $sshDir"
-    echo "   Looked for: id_ed25519, id_ecdsa, id_rsa (with correct permissions)"
-    echo "   Create a key with: ssh-keygen -t ed25519 -f $sshDir/id_ed25519"
-    exit 1
+    sshDir="$HOME/.ssh"
+    if [ ! -d "$sshDir" ]; then
+      echo "❌ No SSH directory found at $sshDir"
+      exit 1
+    fi
+    # Prefer ed25519, then ecdsa, then rsa (standard key names, best to good)
+    for keyName in id_ed25519 id_ecdsa id_rsa; do
+      candidate="$sshDir/$keyName"
+      if [ -f "$candidate" ] && [ -r "$candidate" ]; then
+        if ssh-keygen -l -f "$candidate" >/dev/null 2>&1; then
+          sshKeyPath="$candidate"
+          echo "✅ Using SSH key: $sshKeyPath"
+          break
+        fi
+      fi
+    done
+    if [ "$sshKeyPath" = "$HOME/.ssh/your_private_key" ]; then
+      echo "❌ No usable SSH private key found in $sshDir"
+      echo "   Looked for: id_ed25519, id_ecdsa, id_rsa (with correct permissions)"
+      echo "   Create a key with: ssh-keygen -t ed25519 -f $sshDir/id_ed25519"
+      exit 1
+    fi
   fi
 fi
 
@@ -193,19 +224,19 @@ if [ ! -d "$backupSourceDir" ]; then
 fi
 echo "✅ Source directory exists"
 
-# Check if the SSH key file exists
-if [ ! -f "$sshKeyPath" ]; then
-  echo "❌ SSH key file $sshKeyPath does not exist"
-  exit 1
+# Check SSH key and connectivity (only for full migration)
+if [ "$backupOnly" != "yes" ]; then
+  if [ ! -f "$sshKeyPath" ]; then
+    echo "❌ SSH key file $sshKeyPath does not exist"
+    exit 1
+  fi
+  echo "✅ SSH key file exists"
+  if ! ssh -i "$sshKeyPath" $sshOpts "$sshTarget" "exit"; then
+    echo "❌ SSH connection to $sshTarget failed"
+    exit 1
+  fi
+  echo "✅ SSH connection successful"
 fi
-echo "✅ SSH key file exists"
-
-# Check if we can SSH to the destination server, ignore "The authenticity of host can't be established." errors
-if ! ssh -i "$sshKeyPath" -o "StrictHostKeyChecking no" -o "ConnectTimeout=5" "$sshTarget" "exit"; then
-  echo "❌ SSH connection to $sshTarget failed"
-  exit 1
-fi
-echo "✅ SSH connection successful"
 
 # Get the names of all running Docker containers
 if ! command -v docker >/dev/null 2>&1; then
@@ -257,20 +288,25 @@ backupSourceDirSize=$(du -csh $backupSourceDir 2>/dev/null | grep total | awk '{
 echo "✅ Size of the source directory: $backupSourceDirSize"
 
 # Check if the backup file already exists
+dockerWasStopped=0
 if [ ! -f "$backupFileName" ]; then
   echo "🚸 Backup file does not exist, creating"
 
-  # Recommend stopping docker before creating the backup
+  # Recommend stopping docker before creating the backup (socket too, so it doesn't restart Docker during backup)
   echo "🚸 It's recommended to stop all Docker containers before creating the backup"
   echo "Do you want to stop Docker? (y/n)"
   read -r answer
   if [ "$answer" != "${answer#[Yy]}" ]; then
     if command -v systemctl >/dev/null 2>&1; then
-      if ! systemctl stop docker; then
-        echo "❌ Docker stop failed"
+      if ! systemctl stop docker docker.socket 2>/dev/null; then
+        systemctl stop docker 2>/dev/null || true
+      fi
+      if systemctl is-active --quiet docker 2>/dev/null; then
+        echo "❌ Docker could not be stopped (socket may still be active)"
         exit 1
       fi
-      echo "✅ Docker stopped"
+      echo "✅ Docker and docker.socket stopped"
+      dockerWasStopped=1
     else
       echo "⚠️  systemctl not found, cannot stop Docker service"
       echo "🚸 Continuing with backup (Docker may still be running)"
@@ -300,15 +336,56 @@ if [ ! -f "$backupFileName" ]; then
   rc=$?
   if [ $rc -gt 1 ]; then
     echo "❌ Backup file creation failed"
+    if [ "$dockerWasStopped" = "1" ] && command -v systemctl >/dev/null 2>&1; then
+      echo "🚸 Starting Docker again on source..."
+      systemctl start docker.socket docker 2>/dev/null || systemctl start docker 2>/dev/null || true
+    fi
     exit 1
   fi
   echo "✅ Backup file created (with change warnings suppressed)"
+  if [ "$dockerWasStopped" = "1" ] && command -v systemctl >/dev/null 2>&1; then
+    echo "🚸 Starting Docker again on source (minimizing downtime)..."
+    systemctl start docker.socket docker 2>/dev/null || systemctl start docker 2>/dev/null || true
+    echo "✅ Docker started"
+  fi
 else
   echo "🚸 Backup file already exists, skipping creation"
 fi
 
+# Backup-only mode: skip transfer and exit after optional cleanup
+if [ "$backupOnly" = "yes" ]; then
+  echo ""
+  echo "✅ Backup complete. Run $0 USER@HOST to migrate to a target server."
+  echo "Do you want to remove the local backup file? (y/n)"
+  read -r answer
+  if [ "$answer" != "${answer#[Yy]}" ]; then
+    if ! rm -f "${backupFileName}"; then
+      echo "❌ Failed to remove local backup file"
+      exit 1
+    fi
+    echo "✅ Local backup file removed"
+  else
+    echo "🚸 Local backup file not removed"
+  fi
+  exit 0
+fi
+
 # Define the remote commands to be executed
 remoteCommands="
+  set -e
+  COOLIFY_OS=unknown
+  if [ -f /etc/debian_version ] || { [ -f /etc/os-release ] && grep -iq 'raspbian\\|debian\\|ubuntu' /etc/os-release; }; then
+    COOLIFY_OS=debian
+  elif [ -f /etc/redhat-release ] || { [ -f /etc/os-release ] && grep -iq 'rhel\\|centos\\|fedora' /etc/os-release; }; then
+    COOLIFY_OS=redhat
+  elif [ -f /etc/SuSE-release ] || { [ -f /etc/os-release ] && grep -iq suse /etc/os-release; }; then
+    COOLIFY_OS=suse
+  elif [ -f /etc/arch-release ]; then
+    COOLIFY_OS=arch
+  elif [ -f /etc/alpine-release ]; then
+    COOLIFY_OS=alpine
+  fi
+
   # Check if Docker is a service
   if systemctl is-active --quiet docker; then
     # Stop Docker if it's a service
@@ -321,50 +398,21 @@ remoteCommands="
     echo 'ℹ️ Docker is not a service, skipping stop command';
   fi
 
-  echo '🚸 Checking if curl is installed...';
+  echo '🚸 Ensuring curl is installed...';
   if ! command -v curl &> /dev/null; then
-    echo 'ℹ️  curl is not installed. Installing curl...';
-
-      # Detect OS and install curl accordingly
-      if [ -f /etc/debian_version ] || { [ -f /etc/os-release ] && grep -iq "raspbian\|debian\|ubuntu" /etc/os-release; }; then
-        echo 'ℹ️ Detected Debian-based or Raspberry Pi OS';
-        if ! (apt-get update && apt-get install -y curl); then
-          echo '❌ Failed to install curl on Debian-based or Raspberry Pi OS';
-          exit 1;
-        fi
-      elif [ -f /etc/redhat-release ] || { [ -f /etc/os-release ] && grep -iq "rhel\|centos\|fedora" /etc/os-release; }; then
-        echo 'ℹ️ Detected Redhat-based system';
-        if ! (yum install -y curl 2>/dev/null || dnf install -y curl); then
-          echo '❌ Failed to install curl on Redhat-based system';
-          exit 1;
-        fi
-      elif [ -f /etc/SuSE-release ] || { [ -f /etc/os-release ] && grep -iq "suse" /etc/os-release; }; then
-        echo 'ℹ️ Detected SUSE-based system';
-        if ! zypper install -y curl; then
-        echo '❌ Failed to install curl on SUSE-based system';
-        exit 1;
-        fi
-      elif [ -f /etc/arch-release ]; then
-        echo 'ℹ️ Detected Arch Linux';
-        if ! pacman -Sy --noconfirm curl; then
-        echo '❌ Failed to install curl on Arch Linux';
-        exit 1;
-        fi
-      elif [ -f /etc/alpine-release ]; then
-        echo 'ℹ️ Detected Alpine Linux';
-        if ! apk add --no-cache curl; then
-        echo '❌ Failed to install curl on Alpine Linux';
-        exit 1;
-        fi
-      else
-        echo '❌ Unsupported OS. Please install curl manually.';
-        exit 1;
-      fi
-
-      echo '✅ curl installed';
-    else
-      echo '✅ curl is already installed';
-    fi
+    echo 'ℹ️  Installing curl...';
+    case \"\$COOLIFY_OS\" in
+      debian) apt-get update && apt-get install -y curl ;;
+      redhat) (yum install -y curl 2>/dev/null || dnf install -y curl) ;;
+      suse) zypper install -y curl ;;
+      arch) pacman -Sy --noconfirm curl ;;
+      alpine) apk add --no-cache curl ;;
+      *) echo '❌ Unsupported OS. Install curl manually.'; exit 1 ;;
+    esac
+    echo '✅ curl installed';
+  else
+    echo '✅ curl is already installed';
+  fi
 
   echo '🚸 Saving existing authorized keys...';
   if [ -f ~/.ssh/authorized_keys ]; then
@@ -406,7 +454,13 @@ remoteCommands="
 "
 
 # SSH to the destination server, execute the remote commands
-if ! ssh -i "$sshKeyPath" -o "StrictHostKeyChecking no" "$sshTarget" "$remoteCommands" <"${backupFileName}"; then
+# Rebuild ssh opts for transfer (no ConnectTimeout needed for long-running transfer; keep StrictHostKeyChecking choice)
+if [ "$sshNoStrictHostKey" = "yes" ]; then
+  sshTransferOpts="-o StrictHostKeyChecking=no"
+else
+  sshTransferOpts=""
+fi
+if ! ssh -i "$sshKeyPath" $sshTransferOpts "$sshTarget" "$remoteCommands" <"${backupFileName}"; then
   echo "❌ Remote commands execution or Docker restart failed"
   exit 1
 fi
