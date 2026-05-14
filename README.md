@@ -61,6 +61,37 @@ The script runs on the **source server** and transfers everything to the **desti
 - SSH connectivity from source to destination server
 - SSH key-based authentication configured
 
+### Setting Up SSH Keys
+
+The script needs a private key on the **source** server that can authenticate to the **destination** server. If you don't already have this:
+
+1. **Generate a keypair on the source server:**
+   ```bash
+   ssh-keygen -t ed25519 -f ~/.ssh/coolify_migration_key
+   ```
+   This creates two files:
+   - `~/.ssh/coolify_migration_key` — private key (stays on source server)
+   - `~/.ssh/coolify_migration_key.pub` — public key (goes on destination server)
+
+2. **Copy the public key to the destination server:**
+   ```bash
+   ssh-copy-id -i ~/.ssh/coolify_migration_key.pub root@<destination-ip>
+   ```
+   Or manually — append the `.pub` file contents to `~/.ssh/authorized_keys` on the destination server.
+
+3. **Test the connection:**
+   ```bash
+   ssh -i ~/.ssh/coolify_migration_key root@<destination-ip> "echo works"
+   ```
+
+4. **Set the path in the script:**
+   ```bash
+   sshKeyPath="$HOME/.ssh/coolify_migration_key"
+   destinationHost="<destination-ip>"
+   ```
+
+> **Note:** If running the script with `sudo`, `$HOME` becomes `/root`. Either copy the key to `/root/.ssh/` or use the full path instead of `$HOME`.
+
 ## 🚀 Installation
 
 1. Clone or download this repository:
@@ -69,14 +100,14 @@ git clone https://github.com/rogerb831/coolify-migration.git
 cd coolify-migration
 ```
 
-2. Make the script executable:
-```bash
-chmod +x migrate.sh
-```
-
-3. Edit the configuration section (optional - you can also be prompted at runtime):
+2. Edit the configuration section (optional - you can also be prompted at runtime):
 ```bash
 nano migrate.sh
+```
+
+3. Run the script:
+```bash
+sudo bash migrate.sh
 ```
 
 ## ⚙️ Configuration
